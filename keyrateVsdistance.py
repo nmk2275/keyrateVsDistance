@@ -1,8 +1,3 @@
-
-Sailaja -572
-03:52 (2 hours ago)
-to me
-
 import streamlit as st
 import numpy as np
 import pandas as pd
