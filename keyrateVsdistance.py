@@ -1,294 +1,270 @@
+
+Sailaja -572
+03:52 (2 hours ago)
+to me
+
 import streamlit as st
 import numpy as np
 import pandas as pd
-import altair as alt
-from math import log2, exp, factorial
+import plotly.express as px
+import plotly.graph_objects as go
 
-# =========================================================
-# Helper functions
-# =========================================================
-def binary_entropy(q):
-    if q <= 0 or q >= 1:
-        return 0
-    return -q * log2(q) - (1 - q) * log2(1 - q)
+# -------------------------------------------------
+# Page config
+# -------------------------------------------------
+st.set_page_config(page_title="QKD Simulator", layout="wide")
 
-def poisson(n, mu):
-    return (mu ** n * exp(-mu)) / factorial(n)
+st.title("🔐 Key Rate VS Distance Simulator")
+st.caption("Interactive visualization of QKD performance, security limits, and system feasibility")
 
-# =========================================================
-# PAGE CONFIG
-# =========================================================
-st.set_page_config(page_title="Quantum Networking Simulator", layout="wide")
-st.title("🌐 Quantum Networking Simulator")
-st.caption("Quantum Repeaters + PNS Attack & Decoy-State Defense")
+# -------------------------------------------------
+# Fibre data
+# -------------------------------------------------
+fibres = {
+    "SMF": 0.20,
+    "Ultra-low-loss": 0.16,
+    "PMF": 0.30,
+    "Hollow-core": 0.12
+}
 
-# =========================================================
-# TABS
-# =========================================================
-tab1, tab2 = st.tabs([
-    "🔗 Quantum Repeaters",
-    "🛡️ PNS Attack & Decoy States"
-])
+# -------------------------------------------------
+# Sidebar parameters
+# -------------------------------------------------
+st.sidebar.header("Simulation Parameters")
 
-# =========================================================
-# ================= TAB 1: QUANTUM REPEATERS ==============
-# =========================================================
-with tab1:
-    st.subheader("🔗 Quantum Repeater Performance Dashboard")
-    st.caption("Entanglement distribution using Bell-state measurements")
+fibre = st.sidebar.selectbox("Fibre Type", list(fibres.keys()))
+alpha_base = fibres[fibre]
 
-    # ---------------- Sidebar ----------------
-    st.sidebar.header("Repeater Parameters")
+wavelength = st.sidebar.slider("Wavelength (nm)", 1300, 1600, 1550)
+mu = st.sidebar.slider("Mean photon number (μ)", 0.01, 1.0, 0.5)
+eta = st.sidebar.slider("Detector efficiency (η)", 0.1, 1.0, 0.6)
+dark = st.sidebar.slider("Dark count rate (P_dark)", 1e-6, 1e-3, 1e-4, format="%.6f")
+e_opt = st.sidebar.slider("Optical error (e_opt)", 0.0, 0.05, 0.02)
+max_d = st.sidebar.slider("Maximum distance (km)", 50, 300, 150)
 
-    alpha = st.sidebar.slider("Fiber loss α (dB/km)", 0.15, 0.30, 0.2)
-    F0 = st.sidebar.slider("Initial Bell Fidelity (F₀)", 0.8, 1.0, 0.95)
-    p_dep = st.sidebar.slider("Depolarization probability", 0.0, 0.2, 0.05)
-    gamma = st.sidebar.slider("Memory decoherence rate γ", 0.0, 1.0, 0.1)
-    p_BSM = st.sidebar.slider("BSM success probability", 0.1, 0.5, 0.5)
-    eta_d = st.sidebar.slider("Detector efficiency η_d", 0.1, 1.0, 0.9)
-    R_pair = st.sidebar.slider("Pair generation rate (pairs/sec)", 1e4, 1e7, 1e6)
+QBER_THRESHOLD = 0.11
 
-    # Fixed configuration
-    segment_distance = 50
-    num_repeaters = 3
-    num_segments = num_repeaters + 1
-    T_wait = 200  # ms
+# -------------------------------------------------
+# Physics model
+# -------------------------------------------------
+alpha = alpha_base + 0.00002 * (wavelength - 1550) ** 2
+d = np.linspace(0, max_d, 80)
 
-    # ---------------- Core calculations ----------------
-    eta_channel = 10 ** (-alpha * segment_distance / 10)
-    F_eff = F0 * (1 - p_dep)
+T = 10 ** (-alpha * d / 10)
+signal = mu * T * eta
+noise = dark
 
-    T_mem = 100  # ms
-    P_mem = 1 - exp(-T_mem / T_wait)
+qber = (0.5 * noise + e_opt * signal) / (signal + noise)
+key_rate = signal * (1 - qber)
 
-    F_final = (F_eff * exp(-gamma * (T_mem / 1000))) ** num_segments
-    QBER = (1 - F_final) / 2
-    key_fraction = max(1e-12, 1 - 2 * binary_entropy(QBER))
+photons_survived = mu * T
+photons_lost = mu - photons_survived
 
-    key_rate = (
-        R_pair
-        * (eta_channel ** num_segments)
-        * (p_BSM ** num_repeaters)
-        * (P_mem ** num_repeaters)
-        * eta_d
-        * key_fraction
-    )
+# -------------------------------------------------
+# Security analysis
+# -------------------------------------------------
+secure_mask = qber <= QBER_THRESHOLD
+max_secure_distance = d[secure_mask][-1] if np.any(secure_mask) else 0.0
+i = np.where(d == max_secure_distance)[0][0] if max_secure_distance > 0 else -1
 
-    # ---------------- Metrics ----------------
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Repeaters", num_repeaters)
-    m2.metric("Final Fidelity", f"{F_final:.4f}")
-    m3.metric("QBER", f"{QBER:.4f}")
-    m4.metric("Key Rate (bps)", f"{key_rate:.2e}")
+# -------------------------------------------------
+# Key metrics for table
+# -------------------------------------------------
+raw_key_rate = signal[i]
+sifted_key_rate = 0.5 * raw_key_rate
+secure_key_rate = sifted_key_rate * (1 - qber[i])
 
-    st.divider()
+# =================================================
+# PLOT 1: Key Rate vs Distance + Toolbar Table Toggle
+# =================================================
+fig1 = go.Figure()
 
-    # ---------------- Key Rate vs Distance ----------------
-    st.subheader("🔹 Key Rate vs Distance (Log Scale)")
+# Curve
+fig1.add_trace(go.Scatter(
+    x=d,
+    y=key_rate,
+    mode="lines",
+    name="Key Rate",
+    line=dict(color="cyan", width=2),
+    visible=True
+))
 
-    distances = np.arange(50, 550, 50)
-    rates = []
+# Table
+fig1.add_trace(go.Table(
+    header=dict(
+        values=["Parameter", "Value"],
+        fill_color="black",
+        font=dict(color="white"),
+        align="left"
+    ),
+    cells=dict(
+        values=[
+            [
+                "Fibre Type",
+                "Wavelength (nm)",
+                "Effective Attenuation (dB/km)",
+                "Maximum Secure Distance (km)",
+                "Mean Photon Number (μ)",
+                "Detector Efficiency (η)",
+                "Dark Count Rate",
+                "Raw Key Rate",
+                "Sifted Key Rate",
+                "QBER",
+                "QBER Threshold",
+                "Final Secure Key Rate"
+            ],
+            [
+                fibre,
+                wavelength,
+                f"{alpha:.3f}",
+                f"{max_secure_distance:.1f}",
+                mu,
+                eta,
+                f"{dark:.1e}",
+                f"{raw_key_rate:.3e}",
+                f"{sifted_key_rate:.3e}",
+                f"{qber[i]:.4f}",
+                QBER_THRESHOLD,
+                f"{secure_key_rate:.3e}"
+            ]
+        ],
+        fill_color="rgba(30,30,30,0.9)",
+        font=dict(color="white"),
+        align="left"
+    ),
+    visible=False
+))
 
-    for d in distances:
-        segs = max(1, int(d / segment_distance))
-        Fd = F_eff ** segs
-        Qd = (1 - Fd) / 2
-        rate = (
-            R_pair
-            * (eta_channel ** segs)
-            * (p_BSM ** (segs - 1))
-            * eta_d
-            * max(1e-15, 1 - 2 * binary_entropy(Qd))
+# Secure / insecure regions
+fig1.add_vrect(0, max_secure_distance, fillcolor="green", opacity=0.15, layer="below")
+fig1.add_vrect(max_secure_distance, max_d, fillcolor="red", opacity=0.15, layer="below")
+fig1.add_vline(x=max_secure_distance, line_dash="dash", line_color="yellow")
+
+# Toolbar buttons (SIDE BY SIDE)
+fig1.update_layout(
+    title="Key Rate vs Distance (System Feasibility)",
+    template="plotly_dark",
+    xaxis_title="Distance (km)",
+    yaxis_title="Key Rate",
+    updatemenus=[
+        dict(
+            type="buttons",
+            direction="right",   # 👈 SIDE BY SIDE
+            x=0.55,
+            y=1.25,
+            showactive=True,
+            buttons=[
+                dict(
+                    label="📈 Curve",
+                    method="update",
+                    args=[{"visible": [True, False]}]
+                ),
+                dict(
+                    label="📋 Table",
+                    method="update",
+                    args=[{"visible": [False, True]}]
+                )
+            ]
         )
-        rates.append(rate)
+    ]
+)
 
-    df_dist = pd.DataFrame({
-        "Distance (km)": distances,
-        "Key Rate (bps)": rates
-    })
+st.plotly_chart(fig1, use_container_width=True)
 
-    chart_dist = alt.Chart(df_dist).mark_line(point=True).encode(
-        x="Distance (km):Q",
-        y=alt.Y("Key Rate (bps):Q", scale=alt.Scale(type="log")),
-        tooltip=["Distance (km)", "Key Rate (bps)"]
-    )
+# =================================================
+# PLOT 2: QBER vs Distance
+# =================================================
+fig2 = px.area(
+    x=d,
+    y=qber,
+    labels={"x": "Distance (km)", "y": "QBER"},
+    title="QBER vs Distance",
+    template="plotly_dark"
+)
+fig2.add_hline(y=QBER_THRESHOLD, line_dash="dash", line_color="red")
+st.plotly_chart(fig2, use_container_width=True)
 
-    st.altair_chart(chart_dist, use_container_width=True)
-    st.dataframe(df_dist, use_container_width=True)
+# =================================================
+# PLOT 3: Attenuation vs Wavelength
+# =================================================
+wl = np.linspace(1300, 1600, 80)
+rows = []
 
-    st.divider()
-
-    # ---------------- QBER vs Repeaters ----------------
-    st.subheader("🔹 QBER vs Number of Repeaters")
-
-    reps = np.arange(0, 8)
-    qbers = [(1 - (F_eff ** (r + 1))) / 2 for r in reps]
-
-    df_qber = pd.DataFrame({
-        "Repeaters": reps,
-        "QBER": qbers
-    })
-
-    chart_qber = alt.Chart(df_qber).mark_bar().encode(
-        x="Repeaters:O",
-        y="QBER:Q",
-        tooltip=["Repeaters", "QBER"]
-    )
-
-    st.altair_chart(chart_qber, use_container_width=True)
-    st.dataframe(df_qber, use_container_width=True)
-
-    st.divider()
-
-    # ---------------- Key Rate vs Memory ----------------
-    st.subheader("🔹 Key Rate vs Quantum Memory Lifetime")
-
-    T_vals = np.linspace(10, 1000, 25)
-    rates_mem = []
-
-    for T in T_vals:
-        Pm = 1 - exp(-T / T_wait)
-        FT = (F_eff * exp(-gamma * (T / 1000))) ** num_segments
-        QT = (1 - FT) / 2
-
-        rate = (
-            R_pair
-            * (eta_channel ** num_segments)
-            * (p_BSM ** num_repeaters)
-            * (Pm ** num_repeaters)
-            * eta_d
-            * max(1e-15, 1 - 2 * binary_entropy(QT))
-        )
-        rates_mem.append(rate)
-
-    df_mem = pd.DataFrame({
-        "Memory Lifetime (ms)": T_vals.astype(int),
-        "Key Rate (bps)": rates_mem
-    })
-
-    chart_mem = alt.Chart(df_mem).mark_line(point=True).encode(
-        x="Memory Lifetime (ms):Q",
-        y=alt.Y("Key Rate (bps):Q", scale=alt.Scale(type="log")),
-        tooltip=["Memory Lifetime (ms)", "Key Rate (bps)"]
-    )
-
-    st.altair_chart(chart_mem, use_container_width=True)
-    st.dataframe(df_mem, use_container_width=True)
-
-# =========================================================
-# ================= TAB 2: PNS + DECOY STATES ==============
-# =========================================================
-with tab2:
-    st.subheader("🛡️ PNS Attack & Decoy-State Defense")
-    st.caption("Understand the attack first, then see how decoy states defeat it")
-
-    st.sidebar.header("PNS & Decoy Parameters")
-
-    mu_s = st.sidebar.slider("Signal intensity μ", 0.1, 1.0, 0.5)
-    mu_d = st.sidebar.slider("Decoy intensity ν", 0.01, 0.4, 0.1)
-    distance = st.sidebar.slider("Distance (km)", 10, 300, 100)
-    alpha = st.sidebar.slider("Fiber loss (dB/km)", 0.15, 0.30, 0.2)
-    eta_det = st.sidebar.slider("Detector efficiency", 0.1, 1.0, 0.6)
-    pns_on = st.sidebar.checkbox("Enable PNS Attack", value=True)
-
-    eta_ch = 10 ** (-alpha * distance / 10)
-
-    # Photon statistics
-    P0s, P1s = poisson(0, mu_s), poisson(1, mu_s)
-    Pms = 1 - P0s - P1s
-
-    P0d, P1d = poisson(0, mu_d), poisson(1, mu_d)
-    Pmd = 1 - P0d - P1d
-
-    # ---------------- Step 1: PNS Attack ----------------
-    st.markdown("### 🔴 Step 1: Why PNS Attacks Work")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        df_signal = pd.DataFrame({
-            "Photon Type": ["Vacuum", "Single Photon", "Multi Photon"],
-            "Probability": [P0s, P1s, Pms]
+for f_name, base_loss in fibres.items():
+    for w in wl:
+        rows.append({
+            "Wavelength (nm)": w,
+            "Loss (dB/km)": base_loss + 0.00002 * (w - 1550) ** 2,
+            "Fibre Type": f_name
         })
 
-        chart_pns = alt.Chart(df_signal).mark_bar().encode(
-            x="Photon Type",
-            y="Probability",
-            tooltip=["Photon Type", "Probability"]
-        )
+df_wl = pd.DataFrame(rows)
 
-        st.altair_chart(chart_pns, use_container_width=True)
+fig3 = px.line(
+    df_wl,
+    x="Wavelength (nm)",
+    y="Loss (dB/km)",
+    color="Fibre Type",
+    title="Attenuation vs Wavelength for Different Fibres",
+    template="plotly_dark"
+)
+st.plotly_chart(fig3, use_container_width=True)
 
-    with col2:
-        st.info("""
-• Weak laser pulses sometimes emit **multiple photons**  
-• Eve keeps one photon and forwards the rest  
-• Alice and Bob cannot detect this directly  
-""")
+# =================================================
+# PLOT 4: Photon Survival
+# =================================================
+df_bar = pd.DataFrame({
+    "Type": ["Survived", "Lost"],
+    "Photons": [photons_survived[-1], photons_lost[-1]]
+})
 
-    st.table(pd.DataFrame({
-        "Pulse Type": ["Vacuum", "Single Photon", "Multi Photon"],
-        "Eve Can Steal?": ["No", "No", "Yes"],
-        "Bob Notices?": ["No", "No", "No"]
-    }))
+fig4 = px.bar(
+    df_bar,
+    x="Type",
+    y="Photons",
+    title="Photons at Maximum Distance",
+    template="plotly_dark",
+    color="Type",
+    text_auto=True
+)
+st.plotly_chart(fig4, use_container_width=True)
 
-    # ---------------- Step 2: Decoy States ----------------
-    st.markdown("### 🟢 Step 2: How Decoy States Detect Eve")
+# =================================================
+# PLOT 5: Key Rate Factors
+# =================================================
+pie_data = pd.DataFrame({
+    "Factor": [
+        "Useful Signal",
+        "Channel Loss",
+        "Detector Inefficiency",
+        "Noise (Dark counts)"
+    ],
+    "Contribution": [
+        float(np.mean(signal)),
+        float(np.mean(mu - photons_survived)),
+        float(np.mean(mu * (1 - eta))),
+        float(np.mean(noise))
+    ]
+})
 
-    col3, col4 = st.columns(2)
+fig5 = px.pie(
+    pie_data,
+    names="Factor",
+    values="Contribution",
+    title="Factors Affecting Key Rate",
+    template="plotly_dark"
+)
+st.plotly_chart(fig5, use_container_width=True)
 
-    with col3:
-        df_compare = pd.DataFrame({
-            "Photon Type": ["Vacuum", "Single Photon", "Multi Photon"],
-            "Signal": [P0s, P1s, Pms],
-            "Decoy": [P0d, P1d, Pmd]
-        }).melt("Photon Type", var_name="Pulse", value_name="Probability")
+# -------------------------------------------------
+# Summary
+# -------------------------------------------------
+st.success(f"""
+**Summary**
+• Fibre: {fibre}  
+• Wavelength: {wavelength} nm  
+• Maximum secure transmission distance: {max_secure_distance:.1f} km  
 
-        chart_decoy = alt.Chart(df_compare).mark_bar().encode(
-            x="Photon Type",
-            y="Probability",
-            color="Pulse",
-            tooltip=["Pulse", "Probability"]
-        )
-
-        st.altair_chart(chart_decoy, use_container_width=True)
-
-    with col4:
-        st.info("""
-• Eve cannot distinguish signal from decoy pulses  
-• Any selective attack breaks statistics  
-• Alice and Bob detect Eve **without revealing the key**  
-""")
-
-    # Gain comparison
-    Y1 = eta_ch * eta_det * (0.2 if pns_on else 1)
-    Ymulti = eta_ch * eta_det
-
-    Qs = P1s * Y1 + Pms * Ymulti
-    Qd = P1d * Y1 + Pmd * Ymulti
-
-    st.markdown("### 📊 Gain Consistency Test")
-
-    chart_gain = alt.Chart(pd.DataFrame({
-        "Pulse": ["Signal", "Decoy"],
-        "Gain": [Qs, Qd]
-    })).mark_bar().encode(
-        x="Pulse",
-        y="Gain",
-        tooltip=["Pulse", "Gain"]
-    )
-
-    st.altair_chart(chart_gain, use_container_width=True)
-
-    if abs(Qs - Qd) > 0.01 and pns_on:
-        st.error("🚨 PNS ATTACK DETECTED — Statistics inconsistent")
-    else:
-        st.success("✅ CHANNEL SECURE — No PNS signature detected")
-
-    st.success("""
-**Final takeaway**
-
-• PNS attacks exploit multi-photon pulses  
-• Decoy states turn statistics into a security alarm  
-• This is why modern QKD systems always use decoy states  
+All original graphs are preserved.  
+Only the first graph includes a **horizontal toolbar toggle** for Curve ↔ Table.
 """)
